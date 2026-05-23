@@ -1850,6 +1850,9 @@ class SK_OT_ScreencastKeys(bpy.types.Operator):
 
         if event.type in ('LEFT_ALT', 'RIGHT_ALT'):
             self.keys_status_internal[event.type] = event.value
+        if event.alt is False:
+            self.keys_status_internal['LEFT_ALT'] = False
+            self.keys_status_internal['RIGHT_ALT'] = False
 
     def is_middle_mouse_emulated(self, user_prefs):
         if user_prefs.inputs.use_mouse_emulate_3_button:
