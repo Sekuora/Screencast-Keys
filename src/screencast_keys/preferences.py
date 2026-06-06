@@ -19,6 +19,9 @@
 # <pep8 compliant>
 
 
+import json
+import os
+
 import bpy
 from bpy.props import (
     StringProperty,
@@ -32,6 +35,21 @@ from .utils.addon_updater import AddonUpdaterManager    # extensions.blender.org
 from .utils.bl_class_registry import BlClassRegistry
 from . import common
 from . import c_structure as cstruct    # extensions.blender.org: Delete line
+
+
+PERSISTED_PREFERENCE_EXCLUDES = {
+    "bl_idname",
+    "updater_branch_to_update",
+}
+
+PERSISTED_PREFERENCE_TYPES = {
+    'BOOLEAN',
+    'COLLECTION',
+    'ENUM',
+    'FLOAT',
+    'INT',
+    'STRING',
+}
 
 
 # extensions.blender.org: Delete block start
@@ -130,6 +148,151 @@ class DisplayEventTextAliasProperties(bpy.types.PropertyGroup):
     alias_text: bpy.props.StringProperty(name="Alias Text", default="")
     default_text: bpy.props.StringProperty(options={'HIDDEN'})
     event_id: bpy.props.StringProperty(options={'HIDDEN'})
+
+
+def persisted_preferences_filepath(create=False):
+    config_dir = bpy.utils.user_resource(
+        'CONFIG', path="screencast_keys", create=create)
+    if not config_dir:
+        return ""
+
+    return os.path.join(config_dir, "preferences.json")
+
+
+def _rna_properties(data):
+    for prop in data.bl_rna.properties:
+        if prop.identifier == "rna_type":
+            continue
+        if prop.identifier in PERSISTED_PREFERENCE_EXCLUDES:
+            continue
+        if prop.type not in PERSISTED_PREFERENCE_TYPES:
+            continue
+        if prop.is_readonly and prop.type != 'COLLECTION':
+            continue
+        yield prop
+
+
+def _serialize_property(data, prop):
+    value = getattr(data, prop.identifier)
+    if prop.type == 'COLLECTION':
+        return [_serialize_preferences(item) for item in value]
+    if getattr(prop, "array_length", 0) > 0:
+        return list(value)
+
+    return value
+
+
+def _serialize_preferences(data):
+    preferences = {}
+    for prop in _rna_properties(data):
+        try:
+            preferences[prop.identifier] = _serialize_property(data, prop)
+        except TypeError:
+            continue
+
+    return preferences
+
+
+def _apply_preferences(data, preferences):
+    properties = {
+        prop.identifier: prop
+        for prop in _rna_properties(data)
+    }
+    for identifier, value in preferences.items():
+        if identifier not in properties:
+            continue
+
+        prop = properties[identifier]
+        if prop.type == 'COLLECTION':
+            if not isinstance(value, list):
+                continue
+            collection = getattr(data, identifier)
+            collection.clear()
+            for item_data in value:
+                if not isinstance(item_data, dict):
+                    continue
+                item = collection.add()
+                _apply_preferences(item, item_data)
+        else:
+            try:
+                data[identifier] = value
+            except (AttributeError, KeyError, TypeError, ValueError):
+                try:
+                    setattr(data, identifier, value)
+                except (TypeError, ValueError):
+                    continue
+
+
+def ensure_display_event_text_aliases(prefs):
+    from . import ops     # pylint: disable=C0415
+
+    event_aliases = {
+        item.event_id: item
+        for item in prefs.display_event_text_aliases_props
+    }
+    for event in list(ops.EventType):
+        if event in ops.SK_OT_ScreencastKeys.MODIFIER_EVENT_TYPES:
+            default_text = common.fix_modifier_display_text(
+                ops.EventType.names[event.name]
+            )
+        else:
+            default_text = ops.EventType.names[event.name]
+
+        if event.name in event_aliases:
+            event_aliases[event.name].default_text = default_text
+        else:
+            item = prefs.display_event_text_aliases_props.add()
+            item.event_id = event.name
+            item.default_text = default_text
+
+
+def load_persisted_preferences(prefs):
+    filepath = persisted_preferences_filepath()
+    if not filepath or not os.path.exists(filepath):
+        return
+
+    try:
+        with open(filepath, "r", encoding="utf-8") as file:
+            data = json.load(file)
+    except (OSError, json.JSONDecodeError):
+        return
+
+    if not data.get("persist_preferences", False):
+        return
+
+    _apply_preferences(prefs, data.get("preferences", {}))
+    prefs.persist_preferences = True
+
+
+def save_persisted_preferences(prefs):
+    filepath = persisted_preferences_filepath(create=True)
+    if not filepath:
+        return
+
+    data = {
+        "version": 1,
+        "persist_preferences": True,
+        "preferences": _serialize_preferences(prefs),
+    }
+
+    try:
+        tmp_filepath = "{}.tmp".format(filepath)
+        with open(tmp_filepath, "w", encoding="utf-8") as file:
+            json.dump(data, file, ensure_ascii=False, indent=2)
+        os.replace(tmp_filepath, filepath)
+    except (OSError, TypeError):
+        return
+
+
+def remove_persisted_preferences_file():
+    filepath = persisted_preferences_filepath()
+    if not filepath:
+        return
+
+    try:
+        os.remove(filepath)
+    except OSError:
+        return
 
 
 # pylint: disable=W0613
@@ -525,6 +688,13 @@ class SK_Preferences(bpy.types.AddonPreferences):
         update=ui_in_overlay_update_fn,
     )
 
+    persist_preferences: bpy.props.BoolProperty(
+        name="Persist Preferences",
+        description="Store add-on preferences in Blender user configuration "
+                    "and restore them when this add-on is enabled again",
+        default=False,
+    )
+
     display_event_text_aliases_props: bpy.props.CollectionProperty(
         type=DisplayEventTextAliasProperties
     )
@@ -547,6 +717,7 @@ class SK_Preferences(bpy.types.AddonPreferences):
             layout.separator()
 
             layout.prop(self, "enable_on_startup")
+            layout.prop(self, "persist_preferences")
 
             column = layout.column()
             split = column.split()
