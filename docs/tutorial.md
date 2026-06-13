@@ -220,6 +220,11 @@ You can choose the images following case.
 If this option is enabled, Screencast Keys will be enabled automatically when
 blender will startup up.
 
+### Persist Preferences
+If this option is enabled, Screencast Keys will store its preferences
+in a local file and will restore them when reloaded.
+The preferences are stored in blender's user configuration directory: `config/screencast_keys/preferences.json`
+
 ### UI
 
 #### Sidebar
