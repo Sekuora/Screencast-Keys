@@ -35,6 +35,7 @@ from .utils.addon_updater import AddonUpdaterManager    # extensions.blender.org
 from .utils.bl_class_registry import BlClassRegistry
 from . import common
 from . import c_structure as cstruct    # extensions.blender.org: Delete line
+from . import ops 
 
 
 PERSISTED_PREFERENCE_EXCLUDES = {
@@ -224,7 +225,7 @@ def _apply_preferences(data, preferences):
 
 
 def ensure_display_event_text_aliases(prefs):
-    from . import ops     # pylint: disable=C0415
+    
 
     event_aliases = {
         item.event_id: item
@@ -270,7 +271,7 @@ def save_persisted_preferences(prefs):
         return
 
     data = {
-        "version": 1,
+        "version": "1.0.0",
         "persist_preferences": True,
         "preferences": _serialize_preferences(prefs),
     }
